@@ -318,8 +318,17 @@ def apply_fix(scan_id: int, request: ApplyFixRequest, current_user: dict = Depen
     row = cursor.fetchone()
     
     if not row:
+        cursor.execute("""
+            SELECT repo_url, report_json FROM scans WHERE id = ?
+        """, (scan_id,))
+        row = cursor.fetchone()
+        
+    if not row:
         conn.close()
-        raise HTTPException(status_code=404, detail="Scan report not found")
+        raise HTTPException(
+            status_code=404, 
+            detail="Scan report not found in database. If the backend server restarted, please click 'Scan URL' to refresh your scan."
+        )
         
     report_data = json.loads(row["report_json"])
     findings = report_data.get("findings", [])
