@@ -162,8 +162,13 @@ async def run_all_scans(repo_path):
         )
         return text
 
-    # Centralized cleansing loop for SOC 2 compliance
+    # Centralized cleansing loop for SOC 2 compliance & path normalization
     for f in deduped_findings:
+        if f.get("file"):
+            raw_f = str(f["file"]).strip().replace("\\", "/")
+            clean_f = re.sub(r'^(?:\.\./|\./|/)+', '', raw_f)
+            f["file"] = clean_f
+            
         for field in ["description", "code_snippet", "original_block", "patched_block"]:
             if f.get(field):
                 f[field] = mask_credentials_in_text(f[field])

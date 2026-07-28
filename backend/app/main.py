@@ -377,7 +377,13 @@ def apply_fix(scan_id: int, request: ApplyFixRequest, current_user: dict = Depen
                 repo = parts[1].replace(".git", "")
                 
                 finding = findings[idx]
-                file_path = finding.get("file")
+                raw_file_path = finding.get("file", "app.py") or "app.py"
+                raw_file_path = str(raw_file_path).strip().replace("\\", "/")
+                file_path = re.sub(r'^(?:\.\./|\./|/)+', '', raw_file_path)
+                if repo and file_path.startswith(f"{repo}/"):
+                    file_path = file_path[len(repo)+1:]
+                findings[idx]["file"] = file_path
+
                 package_name = finding.get("package", "dependency")
                 
                 # Retrieve original and patched code blocks
