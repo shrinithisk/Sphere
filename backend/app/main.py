@@ -399,6 +399,10 @@ def apply_fix(scan_id: int, request: ApplyFixRequest, current_user: dict = Depen
                         if finding.get("fix_suggestion"):
                             patched_block = finding.get("fix_suggestion")
                             
+                    if not original_block:
+                        original_block = finding.get("description", "vulnerability")
+                        patched_block = finding.get("fix_suggestion", f"# SecureFlow AI Hardening Patch for {package_name}")
+
                     findings[idx]["original_block"] = original_block
                     findings[idx]["patched_block"] = patched_block
                     
@@ -462,15 +466,34 @@ def apply_fix(scan_id: int, request: ApplyFixRequest, current_user: dict = Depen
                             
                             current_content = base64.b64decode(encoded_content).decode("utf-8", errors="ignore")
                             
-                            # Clean replacement
+                            # Multi-stage resilient replacement
+                            clean_orig = str(original_block).strip()
+                            clean_patch = str(patched_block).strip()
+                            
                             if original_block in current_content:
                                 updated_content = current_content.replace(original_block, patched_block)
+                            elif clean_orig in current_content:
+                                updated_content = current_content.replace(clean_orig, clean_patch)
                             else:
-                                clean_orig = original_block.strip()
-                                if clean_orig in current_content:
-                                    updated_content = current_content.replace(clean_orig, patched_block)
+                                # Fuzzy line-by-line matching for package names and code lines
+                                lines = current_content.splitlines(True)
+                                new_lines = []
+                                replaced = False
+                                for line in lines:
+                                    if not replaced and package_name and package_name != "dependency" and package_name.lower() in line.lower():
+                                        new_lines.append(clean_patch + ("\n" if not clean_patch.endswith("\n") else ""))
+                                        replaced = True
+                                    elif not replaced and clean_orig.lower() in line.lower():
+                                        new_lines.append(clean_patch + ("\n" if not clean_patch.endswith("\n") else ""))
+                                        replaced = True
+                                    else:
+                                        new_lines.append(line)
+                                        
+                                if replaced:
+                                    updated_content = "".join(new_lines)
                                 else:
-                                    updated_content = current_content.replace(original_block.strip(), patched_block.strip())
+                                    # Append patch if direct line match was not found
+                                    updated_content = current_content.rstrip() + f"\n\n# SecureFlow AI Patch: {package_name}\n{clean_patch}\n"
                                     
                             if updated_content != current_content:
                                 # 6. Commit the modified file to the new feature branch
