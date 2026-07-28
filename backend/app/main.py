@@ -420,6 +420,11 @@ def apply_fix(scan_id: int, request: ApplyFixRequest, current_user: dict = Depen
                         repo_resp = client.get(repo_info_url, headers=headers, timeout=10.0)
                         if repo_resp.status_code != 200:
                             conn.close()
+                            if repo_resp.status_code in (401, 403):
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail="GitHub PAT Permission Denied (403/401). Ensure your Personal Access Token has 'Contents (Read and Write)' and 'Pull Requests (Read and Write)' enabled."
+                                )
                             raise HTTPException(
                                 status_code=400,
                                 detail=f"Failed to fetch repository metadata ({repo_resp.status_code}). Check your PAT permissions."
@@ -451,9 +456,15 @@ def apply_fix(scan_id: int, request: ApplyFixRequest, current_user: dict = Depen
                         create_ref_resp = client.post(create_ref_url, headers=headers, json=ref_body, timeout=10.0)
                         if create_ref_resp.status_code not in [200, 201]:
                             conn.close()
+                            gh_msg = create_ref_resp.json().get("message", "")
+                            if create_ref_resp.status_code == 403:
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail=f"GitHub PAT Permission Denied (403): {gh_msg}. Please update your Personal Access Token permissions on GitHub: set 'Contents' and 'Pull Requests' permissions to 'Read and Write'."
+                                )
                             raise HTTPException(
                                 status_code=400,
-                                detail=f"Failed to create new feature branch {new_branch} ({create_ref_resp.status_code})."
+                                detail=f"Failed to create new feature branch {new_branch} ({create_ref_resp.status_code}: {gh_msg})."
                             )
                             
                         # 5. Fetch current file content on the newly created branch
