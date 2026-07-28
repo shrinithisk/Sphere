@@ -345,7 +345,12 @@ export default function Dashboard({ username, onLogout, theme, setTheme }) {
       ));
     } catch (err) {
       console.error("Failed to apply security fix:", err);
-      alert("Error applying fix: " + (err.response?.data?.detail || err.message));
+      const detailMsg = err.response?.data?.detail || err.message || "";
+      if (err.response?.status === 403 || detailMsg.toLowerCase().includes("permission") || detailMsg.toLowerCase().includes("token access required") || detailMsg.includes("403")) {
+        alert("Token Access Required: Your Personal Access Token requires 'Contents (Read and write)' and 'Pull Requests (Read and write)' permissions on GitHub to auto-create feature branches and Pull Requests.");
+      } else {
+        alert("Error applying fix: " + detailMsg);
+      }
     } finally {
       setApplyingFix(null);
     }

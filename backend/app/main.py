@@ -423,7 +423,7 @@ def apply_fix(scan_id: int, request: ApplyFixRequest, current_user: dict = Depen
                             if repo_resp.status_code in (401, 403):
                                 raise HTTPException(
                                     status_code=403,
-                                    detail="GitHub PAT Permission Denied (403/401). Ensure your Personal Access Token has 'Contents (Read and Write)' and 'Pull Requests (Read and Write)' enabled."
+                                    detail="Token Access Required: Your Personal Access Token requires 'Contents (Read and write)' and 'Pull Requests (Read and write)' permissions enabled on GitHub."
                                 )
                             raise HTTPException(
                                 status_code=400,
@@ -460,11 +460,11 @@ def apply_fix(scan_id: int, request: ApplyFixRequest, current_user: dict = Depen
                             if create_ref_resp.status_code == 403:
                                 raise HTTPException(
                                     status_code=403,
-                                    detail=f"GitHub PAT Permission Denied (403): {gh_msg}. Please update your Personal Access Token permissions on GitHub: set 'Contents' and 'Pull Requests' permissions to 'Read and Write'."
+                                    detail="Token Access Required: Your Personal Access Token requires 'Contents (Read and write)' and 'Pull Requests (Read and write)' permissions enabled on GitHub."
                                 )
                             raise HTTPException(
                                 status_code=400,
-                                detail=f"Failed to create new feature branch {new_branch} ({create_ref_resp.status_code}: {gh_msg})."
+                                detail=f"Failed to create new feature branch ({create_ref_resp.status_code}: {gh_msg})."
                             )
                             
                         # 5. Fetch current file content on the newly created branch
