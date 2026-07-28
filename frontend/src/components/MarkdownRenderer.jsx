@@ -5,6 +5,7 @@ export default function MarkdownRenderer({ content, className = "text-slate-300"
   if (!content) return null;
 
   const formatObjectItem = (item, idx) => {
+    if (!item) return "";
     if (typeof item === 'string') {
       const trimmed = item.trim();
       if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
@@ -21,16 +22,33 @@ export default function MarkdownRenderer({ content, className = "text-slate-300"
       return item.map((sub, i) => formatObjectItem(sub, i)).join('\n\n');
     }
     if (typeof item === 'object' && item !== null) {
-      const title = item.title || item.name || item.heading || item.category || item.step;
-      const desc = item.description || item.details || item.summary || item.text || item.content;
-      if (title && desc) {
-        return `### ${idx !== undefined ? `${idx + 1}. ` : ''}${title}\n${desc}`;
+      if (item.summary || item.threat_scenario) {
+        const parts = [];
+        if (item.summary) parts.push(formatObjectItem(item.summary));
+        if (item.threat_scenario) parts.push(formatObjectItem(item.threat_scenario));
+        return parts.join('\n\n');
+      }
+
+      const title = item.title || item.heading || item.name || item.category || item.step;
+      const detailsVal = item.details || item.content || item.description || item.summary || item.text;
+      
+      let formattedDetails = "";
+      if (Array.isArray(detailsVal)) {
+        formattedDetails = detailsVal.map((sub, i) => formatObjectItem(sub, i)).join('\n\n');
+      } else if (typeof detailsVal === 'object' && detailsVal !== null) {
+        formattedDetails = formatObjectItem(detailsVal);
+      } else if (detailsVal) {
+        formattedDetails = String(detailsVal);
+      }
+
+      if (title && formattedDetails) {
+        return `### ${idx !== undefined ? `${idx + 1}. ` : ''}${title}\n${formattedDetails}`;
       } else if (title) {
         return `### ${title}`;
-      } else if (desc) {
-        return desc;
+      } else if (formattedDetails) {
+        return formattedDetails;
       }
-      return Object.entries(item).map(([k, v]) => `**${k.replace(/_/g, ' ').toUpperCase()}**: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join('\n');
+      return Object.entries(item).map(([k, v]) => `**${k.replace(/_/g, ' ').toUpperCase()}**: ${typeof v === 'object' ? formatObjectItem(v) : v}`).join('\n');
     }
     return String(item);
   };

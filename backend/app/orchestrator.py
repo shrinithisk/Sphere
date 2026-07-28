@@ -78,23 +78,40 @@ def format_field_to_markdown(val):
         md_lines = []
         for idx, item in enumerate(val, 1):
             if isinstance(item, dict):
-                title = item.get("title") or item.get("name") or item.get("category") or item.get("step") or f"Finding {idx}"
-                desc = item.get("description") or item.get("details") or item.get("summary") or item.get("text") or ""
-                md_lines.append(f"### {idx}. {title}\n{desc}")
+                heading = item.get("heading") or item.get("title") or item.get("name") or item.get("category") or item.get("step")
+                content = item.get("content") or item.get("description") or item.get("details") or item.get("summary") or item.get("text") or ""
+                if heading and content:
+                    md_lines.append(f"* **{heading}**: {content}")
+                elif heading:
+                    md_lines.append(f"### {heading}")
+                elif content:
+                    md_lines.append(f"{content}")
+                else:
+                    md_lines.append(f"* {json.dumps(item)}")
             elif isinstance(item, str):
-                md_lines.append(f"* {item}")
+                md_lines.append(item if item.startswith(("*", "-", "#", "1.", "2.", "3.", "4.", "5.")) else f"* {item}")
             else:
                 md_lines.append(f"* {json.dumps(item)}")
         return "\n\n".join(md_lines)
     elif isinstance(val, dict):
-        md_lines = []
-        for k, v in val.items():
-            title = k.replace("_", " ").title()
-            if isinstance(v, (dict, list)):
-                md_lines.append(f"### {title}\n{format_field_to_markdown(v)}")
-            else:
-                md_lines.append(f"**{title}**: {v}")
-        return "\n\n".join(md_lines)
+        if "title" in val or "details" in val or "summary" in val:
+            title = val.get("title") or val.get("heading") or ""
+            details = val.get("details") or val.get("summary") or val.get("content") or []
+            md_lines = []
+            if title:
+                md_lines.append(f"### {title}")
+            if details:
+                md_lines.append(format_field_to_markdown(details))
+            return "\n\n".join(md_lines)
+        else:
+            md_lines = []
+            for k, v in val.items():
+                title = k.replace("_", " ").title()
+                if isinstance(v, (dict, list)):
+                    md_lines.append(f"### {title}\n{format_field_to_markdown(v)}")
+                else:
+                    md_lines.append(f"**{title}**: {v}")
+            return "\n\n".join(md_lines)
     return str(val)
 
 # Node 1: Scan Repository
@@ -113,7 +130,6 @@ async def assess_risk_node(state: PipelineState) -> Dict[str, Any]:
     llm = get_llm()
     
     # Calculate objective mathematical risk score
-    # S = max(0, 100 - sum(weight * count))
     weights = {"Critical": 25, "High": 15, "Medium": 5, "Low": 1}
     severity_counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
     for f in findings:
@@ -129,22 +145,30 @@ async def assess_risk_node(state: PipelineState) -> Dict[str, Any]:
         return {
             "health_scores": {"repo_score": repo_score, "pipeline_score": 80},
             "risk_assessment": {
-                "summary": "This is a mock risk assessment summary. Install a GEMINI_API_KEY to generate real assessments.",
+                "summary": "Mock risk assessment summary.",
                 "prioritized_vulns": findings[:3],
                 "threat_scenario": "Insecure Docker runtime permission escalation or workflow token theft."
             }
         }
         
+    # Summarize & select top 5 most critical findings if total findings count is high
+    severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+    sorted_findings = sorted(findings, key=lambda x: severity_rank.get(x.get("severity", "Low"), 4))
+    top_findings = sorted_findings[:5]
+
     prompt = f"""
-    You are a DevSecOps Risk Assessor Agent. Analyze the following list of security findings found in a repository:
-    {json.dumps(findings, indent=2)}
+    You are an executive DevSecOps Risk Assessor Agent.
+    Repository scan summary: {len(findings)} total findings ({severity_counts['Critical']} Critical, {severity_counts['High']} High, {severity_counts['Medium']} Medium, {severity_counts['Low']} Low).
     
-    Provide a JSON object containing:
-    1. "summary": A security summary of the repository. Use short, easy-to-read paragraphs or bullet points to explain the main weaknesses. Focus on readability.
-    2. "threat_scenario": A step-by-step description (using a numbered list or bullet points) showing how an attacker could chain these vulnerabilities together to compromise the system.
-    3. "prioritized_vulns": A list of the findings ordered by true risk/exploitability.
+    Top key findings to analyze:
+    {json.dumps(top_findings, indent=2)}
     
-    Format the summary and threat_scenario with clear markdown (bullet points, bold highlights, inline code) so they are visually scan-friendly and divided into digestible chunks.
+    Provide a JSON object containing EXACTLY:
+    1. "summary": A clean executive Markdown string (NOT a dictionary or nested JSON object). Summarize the main risks in 2-3 bullet points.
+    2. "threat_scenario": A 3-step numbered Markdown string showing how an attacker could exploit these top vulnerabilities (1. Step One, 2. Step Two, 3. Step Three).
+    3. "prioritized_vulns": A list of top 3 vulnerability titles.
+    
+    IMPORTANT: "summary" and "threat_scenario" MUST be plain Markdown strings with bold highlights, headings, or bullet points. DO NOT output nested JSON objects inside summary.
     Return ONLY valid JSON.
     """
     
