@@ -62,6 +62,41 @@ def get_chatbot_llm():
         return None
 
 
+def format_field_to_markdown(val):
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        val_trimmed = val.strip()
+        if (val_trimmed.startswith("[") and val_trimmed.endswith("]")) or (val_trimmed.startswith("{") and val_trimmed.endswith("}")):
+            try:
+                parsed = json.loads(val_trimmed)
+                return format_field_to_markdown(parsed)
+            except Exception:
+                pass
+        return val
+    elif isinstance(val, list):
+        md_lines = []
+        for idx, item in enumerate(val, 1):
+            if isinstance(item, dict):
+                title = item.get("title") or item.get("name") or item.get("category") or item.get("step") or f"Finding {idx}"
+                desc = item.get("description") or item.get("details") or item.get("summary") or item.get("text") or ""
+                md_lines.append(f"### {idx}. {title}\n{desc}")
+            elif isinstance(item, str):
+                md_lines.append(f"* {item}")
+            else:
+                md_lines.append(f"* {json.dumps(item)}")
+        return "\n\n".join(md_lines)
+    elif isinstance(val, dict):
+        md_lines = []
+        for k, v in val.items():
+            title = k.replace("_", " ").title()
+            if isinstance(v, (dict, list)):
+                md_lines.append(f"### {title}\n{format_field_to_markdown(v)}")
+            else:
+                md_lines.append(f"**{title}**: {v}")
+        return "\n\n".join(md_lines)
+    return str(val)
+
 # Node 1: Scan Repository
 async def scan_repo_node(state: PipelineState) -> Dict[str, Any]:
     repo_path = state["repo_path"]
@@ -134,6 +169,13 @@ async def assess_risk_node(state: PipelineState) -> Dict[str, Any]:
                 content = content.strip()
                 
         result = json.loads(content)
+        
+        if isinstance(result, dict):
+            if "summary" in result:
+                result["summary"] = format_field_to_markdown(result["summary"])
+            if "threat_scenario" in result:
+                result["threat_scenario"] = format_field_to_markdown(result["threat_scenario"])
+                
         return {
             "health_scores": {"repo_score": repo_score, "pipeline_score": 100},  # will be computed in next node
             "risk_assessment": result

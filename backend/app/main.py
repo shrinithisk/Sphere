@@ -252,6 +252,13 @@ def get_scan(scan_id: int, current_user: dict = Depends(verify_token)):
         raise HTTPException(status_code=404, detail="Scan report not found")
         
     report = json.loads(row["report_json"])
+    if "risk_assessment" in report and isinstance(report["risk_assessment"], dict):
+        from app.orchestrator import format_field_to_markdown
+        if "summary" in report["risk_assessment"]:
+            report["risk_assessment"]["summary"] = format_field_to_markdown(report["risk_assessment"]["summary"])
+        if "threat_scenario" in report["risk_assessment"]:
+            report["risk_assessment"]["threat_scenario"] = format_field_to_markdown(report["risk_assessment"]["threat_scenario"])
+            
     report["repo_name"] = row["repo_name"]
     report["repo_url"] = row["repo_url"]
     report["created_at"] = row["created_at"]

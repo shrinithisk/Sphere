@@ -4,43 +4,54 @@ import { Copy, Check } from 'lucide-react';
 export default function MarkdownRenderer({ content, className = "text-slate-300", marginClass = "my-2.5", badgeColor = "indigo" }) {
   if (!content) return null;
 
-  let stringContent = "";
-  if (typeof content === 'string') {
-    stringContent = content;
-  } else if (Array.isArray(content)) {
-    stringContent = content.map(item => {
-      if (typeof item === 'string') return item.trim();
-      return JSON.stringify(item);
-    }).join('\n\n');
-  } else if (typeof content === 'object' && content !== null) {
-    const pList = [];
-    if (content.overall_security_posture) {
-      pList.push(content.overall_security_posture);
-    }
-    if (Array.isArray(content.key_weaknesses)) {
-      pList.push("### Key Weaknesses");
-      content.key_weaknesses.forEach(w => {
-        if (w.category && w.details) {
-          pList.push(`* **${w.category}**: ${w.details}`);
-        } else {
-          pList.push(`* ${JSON.stringify(w)}`);
-        }
-      });
-    }
-    Object.keys(content).forEach(key => {
-      if (key !== 'overall_security_posture' && key !== 'key_weaknesses') {
-        const val = content[key];
-        pList.push(`### ${key.replace(/_/g, ' ').toUpperCase()}`);
-        if (Array.isArray(val)) {
-          val.forEach(v => pList.push(`* ${typeof v === 'object' ? JSON.stringify(v) : v}`));
-        } else if (typeof val === 'object' && val !== null) {
-          pList.push(JSON.stringify(val));
-        } else {
-          pList.push(String(val));
+  const formatObjectItem = (item, idx) => {
+    if (typeof item === 'string') {
+      const trimmed = item.trim();
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          return formatObjectItem(parsed, idx);
+        } catch (e) {
+          return trimmed;
         }
       }
-    });
-    stringContent = pList.join('\n\n');
+      return trimmed;
+    }
+    if (Array.isArray(item)) {
+      return item.map((sub, i) => formatObjectItem(sub, i)).join('\n\n');
+    }
+    if (typeof item === 'object' && item !== null) {
+      const title = item.title || item.name || item.heading || item.category || item.step;
+      const desc = item.description || item.details || item.summary || item.text || item.content;
+      if (title && desc) {
+        return `### ${idx !== undefined ? `${idx + 1}. ` : ''}${title}\n${desc}`;
+      } else if (title) {
+        return `### ${title}`;
+      } else if (desc) {
+        return desc;
+      }
+      return Object.entries(item).map(([k, v]) => `**${k.replace(/_/g, ' ').toUpperCase()}**: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join('\n');
+    }
+    return String(item);
+  };
+
+  let stringContent = "";
+  if (typeof content === 'string') {
+    const trimmedContent = content.trim();
+    if ((trimmedContent.startsWith('{') && trimmedContent.endsWith('}')) || (trimmedContent.startsWith('[') && trimmedContent.endsWith(']'))) {
+      try {
+        const parsed = JSON.parse(trimmedContent);
+        stringContent = formatObjectItem(parsed);
+      } catch (e) {
+        stringContent = content;
+      }
+    } else {
+      stringContent = content;
+    }
+  } else if (Array.isArray(content)) {
+    stringContent = content.map((item, idx) => formatObjectItem(item, idx)).join('\n\n');
+  } else if (typeof content === 'object' && content !== null) {
+    stringContent = formatObjectItem(content);
   } else {
     stringContent = String(content);
   }
@@ -145,6 +156,46 @@ export default function MarkdownRenderer({ content, className = "text-slate-300"
             {parseInlineStyles(trimmed.slice(2))}
           </li>
         );
+      }
+      // JSON stringified object line
+      else if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+        flushList(idx);
+        let handled = false;
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (typeof parsed === 'object' && parsed !== null) {
+            const title = parsed.title || parsed.name || parsed.heading || parsed.category || parsed.step;
+            const desc = parsed.description || parsed.details || parsed.summary || parsed.text || parsed.content;
+            if (title || desc) {
+              handled = true;
+              const isRed = badgeColor === 'red';
+              elements.push(
+                <div key={idx} className="my-3 bg-slate-950/60 border border-slate-800/80 p-4 rounded-xl shadow-md space-y-1.5">
+                  {title && (
+                    <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                      <span className={`w-1.5 h-3.5 rounded-full inline-block ${isRed ? 'bg-red-500' : 'bg-indigo-500'}`}></span>
+                      {parseInlineStyles(title)}
+                    </h4>
+                  )}
+                  {desc && (
+                    <div className={`text-xs leading-relaxed text-slate-300 ${className}`}>
+                      {parseInlineStyles(desc)}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+          }
+        } catch (e) {
+          // Fallback to normal paragraph below
+        }
+        if (!handled) {
+          elements.push(
+            <p key={idx} className={`text-sm leading-relaxed ${className} ${marginClass}`}>
+              {parseInlineStyles(trimmed)}
+            </p>
+          );
+        }
       }
       // Empty lines
       else if (trimmed === '') {
