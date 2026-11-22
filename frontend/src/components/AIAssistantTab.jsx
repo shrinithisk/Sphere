@@ -11,7 +11,7 @@ export default function AIAssistantTab({ findingsContext, repoName }) {
   const [messages, setMessages] = useState([
     { 
       sender: 'bot', 
-      text: `Welcome to the SecureFlow AI Security Assistant! 🤖\n\nI have loaded the context from your latest repository audit (**${repoName || 'No repository scanned yet'}**).\n\nYou can ask me detailed questions about any findings, or get advice on securing your Dockerfiles, GitHub Actions workflows, secrets management, or third-party dependencies.\n\nHere are some topics we can explore:`
+      text: `Welcome to the Sphere Security Assistant! 🤖\n\nI have loaded the context from your latest repository audit (**${repoName || 'No repository scanned yet'}**).\n\nYou can ask me detailed questions about any findings, or get advice on securing your Dockerfiles, GitHub Actions workflows, secrets management, or third-party dependencies.\n\nHere are some topics we can explore:`
     }
   ]);
   const [inputText, setInputText] = useState('');
@@ -238,7 +238,7 @@ export default function AIAssistantTab({ findingsContext, repoName }) {
                   <div className="w-2.5 h-2.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
                   <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
                 </div>
-                <span className="text-xs italic text-indigo-400/80">SecureFlow AI is writing a response...</span>
+                <span className="text-xs italic text-indigo-400/80">Sphere is writing a response...</span>
               </div>
             </div>
           )}

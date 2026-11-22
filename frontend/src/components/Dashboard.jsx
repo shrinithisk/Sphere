@@ -371,7 +371,7 @@ export default function Dashboard({ username, onLogout, theme, setTheme }) {
               <Terminal className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="font-bold text-lg leading-none">SecureFlow AI</h1>
+              <h1 className="font-bold text-lg leading-none">Sphere</h1>
               <p className="text-[10px] text-slate-400 mt-1">Logged in as {username}</p>
             </div>
           </div>
@@ -670,7 +670,7 @@ export default function Dashboard({ username, onLogout, theme, setTheme }) {
               
               {/* Print-Only Header: Visible only during browser printing */}
               <div className="print-block border-b border-slate-300 pb-4 mb-6">
-                <h1 className="text-xl font-bold text-slate-900">SecureFlow AI - DevSecOps Security Audit</h1>
+                <h1 className="text-xl font-bold text-slate-900">Sphere - DevSecOps Security Audit</h1>
                 <p className="text-xs text-slate-600 mt-2 leading-relaxed">
                   <strong>Audited Target:</strong> {activeScan.repo_url || activeScan.repo_name}
                 </p>
@@ -846,14 +846,14 @@ export default function Dashboard({ username, onLogout, theme, setTheme }) {
                     </div>
                   </div>
 
-                  {/* SecureFlow Best-Practice Fix Order Banner */}
+                  {/* Sphere Best-Practice Fix Order Banner */}
                   <div className="bg-gradient-to-r from-indigo-950/20 via-slate-900/30 to-purple-950/25 border border-indigo-500/20 rounded-2xl p-5 mb-6 text-xs text-indigo-200 shadow-lg shadow-indigo-950/5 relative overflow-hidden backdrop-blur-md">
                     {/* Glowing highlight orb */}
                     <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
                     
                     <h4 className="font-bold text-indigo-400 mb-3 flex items-center gap-1.5 uppercase tracking-widest text-[10px]">
                       <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
-                      SecureFlow Guideline: Recommended Order of Fixes
+                      Sphere Guideline: Recommended Order of Fixes
                     </h4>
                     
                     <p className="leading-relaxed mb-4 text-slate-400">
@@ -1252,7 +1252,7 @@ export default function Dashboard({ username, onLogout, theme, setTheme }) {
                       </div>
                       <h3 className="font-bold text-sm text-slate-200">No Dependency Files Found</h3>
                       <p className="text-xs text-slate-500 max-w-sm mt-1 leading-relaxed">
-                        SecureFlow AI could not locate package manifests (`requirements.txt` or `package.json`) in this scan. Ensure they are present at the root or nested folders.
+                        Sphere could not locate package manifests (`requirements.txt` or `package.json`) in this scan. Ensure they are present at the root or nested folders.
                       </p>
                     </div>
                   )}

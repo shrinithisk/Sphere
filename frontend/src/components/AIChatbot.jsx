@@ -76,7 +76,7 @@ export default function AIChatbot({ findingsContext }) {
                 <Bot className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h3 className="font-semibold text-sm text-slate-100">SecureFlow Assistant</h3>
+                <h3 className="font-semibold text-sm text-slate-100">Sphere Assistant</h3>
                 <p className="text-[10px] text-green-400">Online & Ready</p>
               </div>
             </div>

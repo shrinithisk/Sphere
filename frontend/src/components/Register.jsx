@@ -43,7 +43,7 @@ export default function Register({ toggleLogin }) {
             <Shield className="w-9 h-9 text-white" />
           </div>
           <h1 className="text-3xl font-bold bg-gradient-to-r from-indigo-200 via-slate-100 to-purple-200 bg-clip-text text-transparent">
-            Join SecureFlow
+            Join Sphere
           </h1>
           <p className="text-sm text-slate-400 mt-1">Create your DevSecOps Account</p>
         </div>

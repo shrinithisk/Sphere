@@ -100,7 +100,7 @@ export default function Login({ onLoginSuccess, theme, setTheme }) {
               </div>
               <div>
                 <h1 className="text-3xl font-extrabold bg-gradient-to-r from-indigo-200 via-slate-100 to-purple-200 bg-clip-text text-transparent tracking-tight">
-                  SecureFlow AI
+                  Sphere
                 </h1>
                 <p className="text-xs text-indigo-400 font-semibold tracking-wider uppercase">Agentic DevSecOps Pipeline Auditor</p>
               </div>
@@ -110,7 +110,7 @@ export default function Login({ onLoginSuccess, theme, setTheme }) {
               Secure your code, packages, and CI/CD pipelines in one go.
             </h2>
             <p className="text-sm text-slate-400 max-w-xl leading-relaxed mb-8">
-              SecureFlow AI integrates static analysis, dependency scanning, and advanced agentic decision making to audit your repository, provide visual git diff patches, and push secure branch remediations.
+              Sphere integrates static analysis, dependency scanning, and advanced agentic decision making to audit your repository, provide visual git diff patches, and push secure branch remediations.
             </p>
 
             {/* Feature Grid */}
