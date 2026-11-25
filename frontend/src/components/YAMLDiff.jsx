@@ -30,8 +30,13 @@ export default function YAMLDiff({ workflowData, scanId, githubToken }) {
     try {
       await axios.post(
         `${API_BASE_URL}/api/scans/${scanId}/commit-workflow`,
-        { github_token: githubToken },
-        { headers }
+        {},
+        { 
+          headers: {
+            ...headers,
+            'X-GitHub-Token': githubToken ? githubToken.trim() : ''
+          }
+        }
       );
       setCommitSuccess(true);
       alert(`Secure workflow committed successfully to your GitHub repository under .github/workflows/${new_filename}!`);

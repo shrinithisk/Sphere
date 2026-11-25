@@ -1,9 +1,13 @@
 import asyncio
+import os
+import re
+from typing import Dict, Any, Optional
 from app.scanners.gitleaks_wrapper import run_gitleaks, is_gitleaks_available
 from app.scanners.hadolint_wrapper import run_hadolint, is_hadolint_available
 from app.scanners.actionlint_wrapper import run_actionlint, is_actionlint_available
 from app.scanners.semgrep_wrapper import run_semgrep, is_semgrep_available
 from app.scanners.osv_wrapper import scan_dependencies
+from app.planner.deduper import deduplicate_and_group
 
 def get_scanners_status():
     return {
@@ -15,7 +19,6 @@ def get_scanners_status():
     }
 
 def extract_line_content(repo_path, relative_file_path, line_number):
-    import os
     try:
         # Resolve absolute path safely and check bounds
         abs_path = os.path.abspath(os.path.join(repo_path, relative_file_path))
@@ -30,46 +33,100 @@ def extract_line_content(repo_path, relative_file_path, line_number):
         print(f"Error extracting line snippet: {e}")
     return None
 
-# Active Scanner Status & Percentage Tracking State
-current_scanner_status = "Idle"
-current_scanner_percentage = 0
+# Active Scanner Status & Percentage Tracking State (Per-Session + Global Fallback)
+_scan_status_store: Dict[str, Dict[str, Any]] = {}
+_latest_status = {"status": "Idle", "percentage": 0}
 
-def get_current_status():
-    global current_scanner_status
-    return current_scanner_status
+def get_current_status(session_id: Optional[str] = None):
+    if session_id:
+        if session_id in _scan_status_store:
+            return _scan_status_store[session_id].get("status", "Idle")
+        return "Idle"
+    return _latest_status.get("status", "Idle")
 
-def get_current_percentage():
-    global current_scanner_percentage
-    return current_scanner_percentage
+def get_current_percentage(session_id: Optional[str] = None):
+    if session_id:
+        if session_id in _scan_status_store:
+            return _scan_status_store[session_id].get("percentage", 0)
+        return 0
+    return _latest_status.get("percentage", 0)
 
-def set_current_status(status, percentage=0):
-    global current_scanner_status, current_scanner_percentage
-    current_scanner_status = status
-    current_scanner_percentage = percentage
+def set_current_status(status: str, percentage: int = 0, session_id: Optional[str] = None):
+    global _latest_status
+    _latest_status = {"status": status, "percentage": percentage}
+    if session_id:
+        _scan_status_store[session_id] = {"status": status, "percentage": percentage}
 
-async def run_all_scans(repo_path):
-    print(f"Starting aggregate scan on: {repo_path}")
+def cleanup_scan_status(session_id: Optional[str] = None):
+    """Requirement A5: Clean up per-scan status entries when scan finishes."""
+    if session_id:
+        _scan_status_store.pop(session_id, None)
+
+def mask_credentials_in_text(text: str) -> str:
+    if not text:
+        return text
+    # Mask private keys
+    text = re.sub(
+        r'-----BEGIN[ A-Z0-9_-]+PRIVATE KEY-----\s*[\s\S]+?\s*-----END[ A-Z0-9_-]+PRIVATE KEY-----',
+        '-----BEGIN PRIVATE KEY-----\n****************************************\n-----END PRIVATE KEY-----',
+        text
+    )
+    # Mask GitHub Personal Access Tokens
+    text = re.sub(
+        r'(ghp_[a-zA-Z0-9_]{4})[a-zA-Z0-9_]{20,255}',
+        r'\1************************',
+        text
+    )
+    # Mask AWS Access Keys
+    text = re.sub(
+        r'(AKIA[0-9A-Z]{4})[0-9A-Z]{12}',
+        r'\1************',
+        text
+    )
+    # Mask Slack webhook URLs
+    text = re.sub(
+        r'(https://hooks\.slack\.com/services/T[A-Z0-9_]+/B[A-Z0-9_]+/)[a-zA-Z0-9_]+',
+        r'\1************************',
+        text
+    )
+    # Mask raw variable assignments in code snippets
+    keywords = r'(password|passwd|secret|token|api_key|apikey|access_key|private_key|key|pwd)'
+    text = re.sub(
+        rf'({keywords}\s*[:=]\s*")[^"]{{8,}}(")',
+        r'\1********\2',
+        text,
+        flags=re.IGNORECASE
+    )
+    text = re.sub(
+        rf"({keywords}\s*[:=]\s*')[^']{{8,}}(')",
+        r"\1********\2",
+        text,
+        flags=re.IGNORECASE
+    )
+    return text
+
+async def run_all_scans(repo_path: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    print(f"Starting aggregate scan on: {repo_path} (session={session_id})")
     
-    # Run the CPU-based CLI scanners sequentially to avoid memory spike OOMs
     loop = asyncio.get_event_loop()
     
-    set_current_status("Gitleaks: Auditing Git commit history and files for leaked secrets...", 20)
+    set_current_status("Gitleaks: Auditing Git commit history and files for leaked secrets...", 20, session_id)
     print("Executing Gitleaks scan...")
     gitleaks_res = await loop.run_in_executor(None, run_gitleaks, repo_path)
     
-    set_current_status("Hadolint: Verifying Dockerfile container base image instructions...", 30)
+    set_current_status("Hadolint: Verifying Dockerfile container base image instructions...", 30, session_id)
     print("Executing Hadolint scan...")
     hadolint_res = await loop.run_in_executor(None, run_hadolint, repo_path)
     
-    set_current_status("Actionlint: Validating GitHub Actions workflows in .github/workflows/...", 40)
+    set_current_status("Actionlint: Validating GitHub Actions workflows in .github/workflows/...", 40, session_id)
     print("Executing Actionlint scan...")
     actionlint_res = await loop.run_in_executor(None, run_actionlint, repo_path)
     
-    set_current_status("Semgrep: Analyzing Python/JS code modules for application vulnerabilities...", 50)
+    set_current_status("Semgrep: Analyzing Python/JS code modules for application vulnerabilities...", 50, session_id)
     print("Executing Semgrep scan...")
     semgrep_res = await loop.run_in_executor(None, run_semgrep, repo_path)
     
-    set_current_status("OSV Scanner: Auditing external package dependencies in requirements.txt / package.json...", 60)
+    set_current_status("OSV Scanner: Auditing external package dependencies and lockfiles...", 60, session_id)
     print("Executing OSV dependency scan...")
     osv_res_tuple = await scan_dependencies(repo_path)
     
@@ -82,99 +139,34 @@ async def run_all_scans(repo_path):
     raw_findings.extend(semgrep_res)
     raw_findings.extend(osv_findings)
     
-    # Deduplicate findings
-    deduped_findings = []
-    seen = set()
-    
+    # Extract code snippets where applicable
     for f in raw_findings:
-        # Create a uniqueness signature
-        sig = (f.get("tool"), f.get("file"), f.get("line"), f.get("description", "")[:50])
-        if sig not in seen:
-            seen.add(sig)
-            
-            # Extract actual code snippet line
-            file_path = f.get("file", "")
-            line_num = f.get("line")
-            if file_path and line_num is not None:
-                snippet = extract_line_content(repo_path, file_path, int(line_num))
-                if snippet:
-                    f["code_snippet"] = snippet
-                    
-            deduped_findings.append(f)
-            
-    # Sort findings: Severity first (Critical -> High -> Medium -> Low), then group by File, then by Line
-    severity_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
-    def get_sorting_key(item):
-        sev = item.get("severity", "Medium")
-        sev_val = severity_order.get(sev, 2)
-        file_path = item.get("file", "")
-        # Handle string or None lines safely
-        try:
-            line_val = int(item.get("line", 0))
-        except (ValueError, TypeError):
-            line_val = 0
-        return (sev_val, file_path, line_val)
-        
-    deduped_findings.sort(key=get_sorting_key)
-    
-    # Define regex-based credential masking helper
-    import re
-    def mask_credentials_in_text(text: str) -> str:
-        if not text:
-            return text
-        # Mask private keys
-        text = re.sub(
-            r'-----BEGIN[ A-Z0-9_-]+PRIVATE KEY-----\s*[\s\S]+?\s*-----END[ A-Z0-9_-]+PRIVATE KEY-----',
-            '-----BEGIN PRIVATE KEY-----\n****************************************\n-----END PRIVATE KEY-----',
-            text
-        )
-        # Mask GitHub Personal Access Tokens
-        text = re.sub(
-            r'(ghp_[a-zA-Z0-9_]{4})[a-zA-Z0-9_]{20,255}',
-            r'\1************************',
-            text
-        )
-        # Mask AWS Access Keys
-        text = re.sub(
-            r'(AKIA[0-9A-Z]{4})[0-9A-Z]{12}',
-            r'\1************',
-            text
-        )
-        # Mask Slack webhook URLs
-        text = re.sub(
-            r'(https://hooks\.slack\.com/services/T[A-Z0-9_]+/B[A-Z0-9_]+/)[a-zA-Z0-9_]+',
-            r'\1************************',
-            text
-        )
-        # Mask raw variable assignments in code snippets
-        keywords = r'(password|passwd|secret|token|api_key|apikey|access_key|private_key|key|pwd)'
-        text = re.sub(
-            rf'({keywords}\s*[:=]\s*")[^"]{{8,}}(")',
-            r'\1********\2',
-            text,
-            flags=re.IGNORECASE
-        )
-        text = re.sub(
-            rf"({keywords}\s*[:=]\s*')[^']{{8,}}(')",
-            r"\1********\2",
-            text,
-            flags=re.IGNORECASE
-        )
-        return text
-
-    # Centralized cleansing loop for SOC 2 compliance & path normalization
-    for f in deduped_findings:
+        file_path = f.get("file", "")
+        line_num = f.get("line")
+        if file_path and line_num is not None:
+            snippet = extract_line_content(repo_path, file_path, int(line_num))
+            if snippet:
+                f["code_snippet"] = snippet
+                
+        # Path normalization
         if f.get("file"):
             raw_f = str(f["file"]).strip().replace("\\", "/")
-            clean_f = re.sub(r'^(?:\.\./|\./|/)+', '', raw_f)
-            f["file"] = clean_f
+            f["file"] = re.sub(r'^(?:\.\./|\./|/)+', '', raw_f)
             
         for field in ["description", "code_snippet", "original_block", "patched_block"]:
             if f.get(field):
                 f[field] = mask_credentials_in_text(f[field])
-             
-    print(f"Aggregation complete. Found {len(deduped_findings)} unique vulnerabilities.")
+
+    # Run unified normalization, multi-CVE grouping, and deduplication
+    deduped_unified, score_metrics = deduplicate_and_group(raw_findings)
+    
+    # Convert UnifiedFinding models to dictionaries for backwards compatibility
+    findings_dicts = [f.model_dump() for f in deduped_unified]
+    
+    print(f"Aggregation complete. Found {len(findings_dicts)} unique findings (Repo score: {score_metrics['repo_score']}).")
     return {
-        "findings": deduped_findings,
+        "findings": findings_dicts,
+        "unified_findings": deduped_unified,
+        "score_metrics": score_metrics,
         "dependencies": osv_deps
     }

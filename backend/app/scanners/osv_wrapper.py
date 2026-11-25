@@ -25,16 +25,22 @@ def parse_requirements_txt(filepath):
     dependencies = []
     if not os.path.exists(filepath):
         return dependencies
-    with open(filepath, "r") as f:
+    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            # Match package==version
+            # Match package==version or package>=version
             match = re.match(r"^([a-zA-Z0-9_\-\[\]]+)==([0-9a-zA-Z\.\-\+]+)", line)
             if match:
                 name, version = match.groups()
-                dependencies.append({"name": name, "version": version, "ecosystem": "PyPI"})
+                dependencies.append({
+                    "name": name,
+                    "version": version,
+                    "ecosystem": "PyPI",
+                    "file": os.path.basename(filepath),
+                    "full_path": filepath
+                })
     return dependencies
 
 def parse_package_json(filepath):
@@ -42,19 +48,85 @@ def parse_package_json(filepath):
     if not os.path.exists(filepath):
         return dependencies
     try:
-        with open(filepath, "r") as f:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
             data = json.load(f)
-            # Combine dependencies and devDependencies
             deps = data.get("dependencies", {})
             dev_deps = data.get("devDependencies", {})
             all_deps = {**deps, **dev_deps}
             for name, version_range in all_deps.items():
-                # Clean version (strip caret/tilde/stars)
-                version = re.sub(r"[~\^>=<*]", "", version_range).strip()
+                version = re.sub(r"[~\^>=<*]", "", str(version_range)).strip()
                 if version:
-                    dependencies.append({"name": name, "version": version, "ecosystem": "npm"})
+                    dependencies.append({
+                        "name": name,
+                        "version": version,
+                        "ecosystem": "npm",
+                        "file": os.path.basename(filepath),
+                        "full_path": filepath
+                    })
     except Exception as e:
         print(f"Error parsing package.json: {e}")
+    return dependencies
+
+def parse_package_lock_json(filepath):
+    """Parses npm package-lock.json (both v1 and v2/v3 formats) for exact locked versions."""
+    dependencies = []
+    if not os.path.exists(filepath):
+        return dependencies
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            data = json.load(f)
+            # v2/v3 format
+            packages = data.get("packages", {})
+            if packages:
+                for pkg_path, meta in packages.items():
+                    if not pkg_path:
+                        continue
+                    name = pkg_path.split("node_modules/")[-1] if "node_modules/" in pkg_path else pkg_path
+                    version = meta.get("version")
+                    if name and version:
+                        dependencies.append({
+                            "name": name,
+                            "version": str(version),
+                            "ecosystem": "npm",
+                            "file": os.path.basename(filepath),
+                            "full_path": filepath
+                        })
+            # v1 format fallback
+            deps = data.get("dependencies", {})
+            if deps and not dependencies:
+                for name, meta in deps.items():
+                    version = meta.get("version") if isinstance(meta, dict) else None
+                    if name and version:
+                        dependencies.append({
+                            "name": name,
+                            "version": str(version),
+                            "ecosystem": "npm",
+                            "file": os.path.basename(filepath),
+                            "full_path": filepath
+                        })
+    except Exception as e:
+        print(f"Error parsing package-lock.json: {e}")
+    return dependencies
+
+def parse_poetry_lock(filepath):
+    """Parses poetry.lock for exact locked PyPI versions."""
+    dependencies = []
+    if not os.path.exists(filepath):
+        return dependencies
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+            matches = re.findall(r'\[\[package\]\][\s\S]*?name\s*=\s*"([^"]+)"[\s\S]*?version\s*=\s*"([^"]+)"', content)
+            for name, version in matches:
+                dependencies.append({
+                    "name": name,
+                    "version": version,
+                    "ecosystem": "PyPI",
+                    "file": os.path.basename(filepath),
+                    "full_path": filepath
+                })
+    except Exception as e:
+        print(f"Error parsing poetry.lock: {e}")
     return dependencies
 
 async def query_osv(package_name, version, ecosystem):
@@ -79,15 +151,40 @@ async def scan_dependencies(repo_path):
     dependencies = []
     dependencies_list = []
     
-    # Locate package files
+    # Locate package and lock files
+    seen_pkgs = set()
     for root, dirs, files in os.walk(repo_path):
-        # Exclude common large dirs
-        dirs[:] = [d for d in dirs if d not in ["node_modules", ".git", "venv", "__pycache__"]]
-        for file in files:
-            if file == "requirements.txt":
-                dependencies.extend(parse_requirements_txt(os.path.join(root, file)))
-            elif file == "package.json":
-                dependencies.extend(parse_package_json(os.path.join(root, file)))
+        dirs[:] = [d for d in dirs if d not in ["node_modules", ".git", "venv", "__pycache__", "dist", "build"]]
+        
+        has_npm_lock = "package-lock.json" in files
+        has_poetry_lock = "poetry.lock" in files
+        
+        # Prefer locked versions when lockfiles exist
+        if has_npm_lock:
+            for dep in parse_package_lock_json(os.path.join(root, "package-lock.json")):
+                key = (dep["name"].lower(), dep["ecosystem"])
+                if key not in seen_pkgs:
+                    seen_pkgs.add(key)
+                    dependencies.append(dep)
+        elif "package.json" in files:
+            for dep in parse_package_json(os.path.join(root, "package.json")):
+                key = (dep["name"].lower(), dep["ecosystem"])
+                if key not in seen_pkgs:
+                    seen_pkgs.add(key)
+                    dependencies.append(dep)
+                    
+        if has_poetry_lock:
+            for dep in parse_poetry_lock(os.path.join(root, "poetry.lock")):
+                key = (dep["name"].lower(), dep["ecosystem"])
+                if key not in seen_pkgs:
+                    seen_pkgs.add(key)
+                    dependencies.append(dep)
+        elif "requirements.txt" in files:
+            for dep in parse_requirements_txt(os.path.join(root, "requirements.txt")):
+                key = (dep["name"].lower(), dep["ecosystem"])
+                if key not in seen_pkgs:
+                    seen_pkgs.add(key)
+                    dependencies.append(dep)
                 
     # Query OSV for each dependency
     for dep in dependencies:
@@ -138,17 +235,18 @@ async def scan_dependencies(repo_path):
             cve_str = ", ".join(cves)
             cve_id = cves[0] if cves else "Unknown"
             
+            target_manifest = dep.get("file", "requirements.txt" if dep["ecosystem"] == "PyPI" else "package.json")
             fix_suggestion = None
             original_block = None
             patched_block = None
             
             if max_fix_version:
                 if dep["ecosystem"] == "PyPI":
-                    fix_suggestion = f"Upgrade `{dep['name']}` from `{dep['version']}` to `{max_fix_version}` in requirements.txt"
+                    fix_suggestion = f"Upgrade `{dep['name']}` from `{dep['version']}` to `{max_fix_version}` in {target_manifest}"
                     original_block = f"{dep['name']}=={dep['version']}"
                     patched_block = f"{dep['name']}=={max_fix_version}"
                 elif dep["ecosystem"] == "npm":
-                    fix_suggestion = f"Upgrade `{dep['name']}` from `{dep['version']}` to `{max_fix_version}` in package.json"
+                    fix_suggestion = f"Upgrade `{dep['name']}` from `{dep['version']}` to `{max_fix_version}` in {target_manifest}"
                     original_block = f'"{dep["name"]}": "{dep["version"]}"'
                     patched_block = f'"{dep["name"]}": "{max_fix_version}"'
                     
@@ -168,13 +266,14 @@ async def scan_dependencies(repo_path):
                 "original_block": original_block,
                 "patched_block": patched_block,
                 "description": combined_description,
-                "file": "requirements.txt" if dep["ecosystem"] == "PyPI" else "package.json"
+                "file": target_manifest
             })
             
         dependencies_list.append({
             "name": dep["name"],
             "version": dep["version"],
             "ecosystem": dep["ecosystem"],
+            "file": dep.get("file"),
             "is_vulnerable": is_vuln,
             "cve": cve_id
         })

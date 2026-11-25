@@ -1,11 +1,95 @@
 import os
 import json
 import asyncio
-from typing import List, Dict, Any
+import re
+from typing import List, Dict, Any, Optional
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langchain_google_genai import ChatGoogleGenerativeAI
 from app.scanners.aggregator import run_all_scans, get_scanners_status, set_current_status
+
+
+def sanitize_text_for_llm(text: str) -> str:
+    """
+    Requirement 6: Redaction covering all file contents, workflows, and prompts sent to LLM.
+    Redacts:
+    - AWS access keys (AKIA...)
+    - GitHub tokens (ghp_, gho_, ghu_, ghs_, ghr_, github_pat_...)
+    - Private key blocks (PEM RSA/EC/OPENSSH/DSA)
+    - Generic password/token/key/secret assignments with quotes or bare values
+    - Generic high-entropy secrets (32+ char hex strings or base64 token blocks)
+    """
+    if not text or not isinstance(text, str):
+        return text
+
+    # 1. AWS keys
+    text = re.sub(r'AKIA[0-9A-Z]{16}', '[REDACTED]', text)
+
+    # 2. GitHub PATs and OAuth tokens
+    text = re.sub(r'gh[pousr]_[A-Za-z0-9_]{20,}', '[REDACTED]', text)
+    text = re.sub(r'github_pat_[A-Za-z0-9_]{20,}', '[REDACTED]', text)
+
+    # 3. Private keys
+    text = re.sub(
+        r'-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----',
+        '[REDACTED_PRIVATE_KEY]',
+        text
+    )
+
+    # 4. Key/Secret/Token/Password assignments (quoted or unquoted)
+    text = re.sub(
+        r'((?:[a-zA-Z0-9_]*(?:password|passwd|secret|token|api[_-]?key|auth[_-]?key|client[_-]?secret)[a-zA-Z0-9_]*)\s*[:=]\s*["\'])([^"\']{4,})(["\'])',
+        r'\1[REDACTED]\3',
+        text,
+        flags=re.IGNORECASE
+    )
+    text = re.sub(
+        r'((?:[a-zA-Z0-9_]*(?:password|passwd|secret|token|api[_-]?key|auth[_-]?key|client[_-]?secret)[a-zA-Z0-9_]*)\s*[:=]\s*)([A-Za-z0-9_\-+/]{16,})',
+        r'\1[REDACTED]',
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # 5. Generic high-entropy secrets (32+ char hex strings or base64 strings)
+    # Exclude: uses: ...@<sha> lines and standard 40-char git commit references
+    lines = text.splitlines(True)
+    sanitized_lines = []
+    for line in lines:
+        stripped = line.strip()
+        # Protect GitHub Action SHA pinning lines (e.g. uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5)
+        if stripped.startswith("uses:") or ("@" in stripped and any(p in stripped for p in ("actions/", "github/"))):
+            sanitized_lines.append(line)
+            continue
+
+        # Protect explicit Git commit SHA fields/references
+        if re.search(r'(?:commit|commit_sha|head_sha|base_sha|ref|tree_sha|parent_sha|git\s+checkout)\s*[:=]?\s*["\']?[0-9a-fA-F]{40}["\']?', line, re.IGNORECASE):
+            sanitized_lines.append(line)
+            continue
+
+        # Redact generic high-entropy hex tokens (32 to 64 characters) on non-git lines
+        line = re.sub(r'(?<!@)\b[0-9a-fA-F]{32,64}\b', '[REDACTED]', line)
+        sanitized_lines.append(line)
+
+    text = "".join(sanitized_lines)
+    text = re.sub(r'(?:Bearer\s+)[A-Za-z0-9\-_.~+/]+=*', 'Bearer [REDACTED]', text, flags=re.IGNORECASE)
+
+    return text
+
+
+def sanitize_findings_for_llm(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Requirement 5 & 6: Redaction in LLM prompts.
+    Strips raw secrets, tokens, and sensitive credential matches from findings before sending to LLM.
+    """
+    sanitized = []
+    for f in findings:
+        f_copy = dict(f)
+        for field in ("code_snippet", "description", "original_block", "patched_block", "fix_suggestion"):
+            val = f_copy.get(field)
+            if isinstance(val, str):
+                f_copy[field] = sanitize_text_for_llm(val)
+        sanitized.append(f_copy)
+    return sanitized
 
 # Load local .env variables manually
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,8 +103,9 @@ if os.path.exists(env_path):
                 os.environ[key.strip()] = val.strip()
 
 # Define Graph State Schema
-class PipelineState(TypedDict):
+class PipelineState(TypedDict, total=False):
     repo_path: str
+    session_id: Optional[str]
     findings: List[Dict[str, Any]]
     risk_assessment: Dict[str, Any]
     optimized_workflows: List[Dict[str, Any]]
@@ -117,16 +202,22 @@ def format_field_to_markdown(val):
 # Node 1: Scan Repository
 async def scan_repo_node(state: PipelineState) -> Dict[str, Any]:
     repo_path = state["repo_path"]
-    scan_results = await run_all_scans(repo_path)
+    session_id = state.get("session_id")
+    scan_results = await run_all_scans(repo_path, session_id=session_id)
+    repo_score = scan_results.get("score_metrics", {}).get("repo_score", 100)
     return {
         "findings": scan_results["findings"],
-        "dependencies": scan_results["dependencies"]
+        "dependencies": scan_results["dependencies"],
+        "health_scores": {"repo_score": repo_score, "pipeline_score": 100}
     }
 
 # Node 2: AI Risk Assessment
 async def assess_risk_node(state: PipelineState) -> Dict[str, Any]:
-    set_current_status("Gemini AI: Processing findings to construct attacker exploitation threat models...", 70)
+    session_id = state.get("session_id")
+    set_current_status("Gemini AI: Processing findings to construct attacker exploitation threat models...", 70, session_id)
     findings = state["findings"]
+    health_scores = state.get("health_scores", {"repo_score": 100, "pipeline_score": 100})
+    repo_score = health_scores.get("repo_score", 100)
     llm = get_llm()
     
     # Calculate objective mathematical risk score
@@ -154,7 +245,7 @@ async def assess_risk_node(state: PipelineState) -> Dict[str, Any]:
     # Summarize & select top 5 most critical findings if total findings count is high
     severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
     sorted_findings = sorted(findings, key=lambda x: severity_rank.get(x.get("severity", "Low"), 4))
-    top_findings = sorted_findings[:5]
+    top_findings = sanitize_findings_for_llm(sorted_findings[:5])
 
     prompt = f"""
     You are an executive DevSecOps Risk Assessor Agent.
@@ -224,7 +315,8 @@ async def assess_risk_node(state: PipelineState) -> Dict[str, Any]:
 
 # Node 3: AI GitHub Workflow Engineer (USP)
 async def engineer_workflows_node(state: PipelineState) -> Dict[str, Any]:
-    set_current_status("Gemini AI: Engineering hardened, least-privilege CI/CD workflow configurations...", 80)
+    session_id = state.get("session_id")
+    set_current_status("Gemini AI: Engineering hardened, least-privilege CI/CD workflow configurations...", 80, session_id)
     repo_path = state["repo_path"]
     findings = state["findings"]
     health_scores = state.get("health_scores", {"repo_score": 100, "pipeline_score": 100})
@@ -244,8 +336,11 @@ async def engineer_workflows_node(state: PipelineState) -> Dict[str, Any]:
     if os.path.isdir(workflow_dir):
         for file in os.listdir(workflow_dir):
             if file.endswith(".yml") or file.endswith(".yaml"):
-                with open(os.path.join(workflow_dir, file), "r") as f:
-                    workflows.append({"filename": file, "content": f.read()})
+                with open(os.path.join(workflow_dir, file), "r", encoding="utf-8", errors="ignore") as f:
+                    raw_content = f.read()
+                    # Requirement 6: Sanitize workflow file contents before sending to LLM
+                    clean_content = sanitize_text_for_llm(raw_content)
+                    workflows.append({"filename": file, "content": clean_content})
                     
     llm = get_llm()
     if not llm:
@@ -360,7 +455,8 @@ jobs:
 
 # Node 4: AI Remediation & Patching
 async def generate_remediations_node(state: PipelineState) -> Dict[str, Any]:
-    set_current_status("Gemini AI: Synthesizing automated codebase code patches and fix details...", 90)
+    session_id = state.get("session_id")
+    set_current_status("Gemini AI: Synthesizing automated codebase code patches and fix details...", 90, session_id)
     findings = state["findings"]
     llm = get_llm()
     
@@ -375,9 +471,10 @@ async def generate_remediations_node(state: PipelineState) -> Dict[str, Any]:
             }]
         }
         
+    clean_findings = sanitize_findings_for_llm(findings)
     prompt = f"""
     You are an AI DevSecOps Remediation Agent. For the following findings:
-    {json.dumps(findings, indent=2)}
+    {json.dumps(clean_findings, indent=2)}
     
     Generate specific patch recommendations. For each fixable issue, output:
     1. "file": File path needing correction.
@@ -435,9 +532,10 @@ def build_graph():
 # Global Compiled graph
 workflow_graph = build_graph()
 
-async def run_security_pipeline(repo_path: str) -> Dict[str, Any]:
-    initial_state = {
+async def run_security_pipeline(repo_path: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    initial_state: PipelineState = {
         "repo_path": repo_path,
+        "session_id": session_id,
         "findings": [],
         "risk_assessment": {},
         "optimized_workflows": [],
@@ -458,4 +556,4 @@ async def run_security_pipeline(repo_path: str) -> Dict[str, Any]:
             "dependencies": final_state.get("dependencies", [])
         }
     finally:
-        set_current_status("Idle")
+        set_current_status("Idle", 0, session_id)

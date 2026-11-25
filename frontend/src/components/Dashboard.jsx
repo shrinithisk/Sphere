@@ -129,7 +129,7 @@ export default function Dashboard({ username, onLogout, theme, setTheme }) {
   const [activeTab, setActiveTab] = useState('dashboard'); // dashboard, workflows, ai-assistant
   const [expandedFindings, setExpandedFindings] = useState({});
   const [applyingFix, setApplyingFix] = useState(null);
-  const [githubToken, setGithubToken] = useState(localStorage.getItem('github_token') || '');
+  const [githubToken, setGithubToken] = useState(''); // Stored strictly in React memory; never in localStorage/sessionStorage
 
   useEffect(() => {
     localStorage.setItem('pr_policy', prPolicy);
@@ -324,10 +324,14 @@ export default function Dashboard({ username, onLogout, theme, setTheme }) {
       const response = await axios.post(
         `${API_BASE_URL}/api/scans/${activeScan.id}/apply-fix`,
         { 
-          finding_index: originalIndex,
-          github_token: githubToken || null
+          finding_index: originalIndex
         },
-        { headers }
+        { 
+          headers: {
+            ...headers,
+            'X-GitHub-Token': githubToken ? githubToken.trim() : ''
+          }
+        }
       );
       // Merge the database scan ID and info back into the returned LangGraph state object
       const updatedScan = {
@@ -528,19 +532,13 @@ export default function Dashboard({ username, onLogout, theme, setTheme }) {
                   placeholder="ghp_xxxxxxxxxxxx"
                   className="w-full text-xs text-slate-300 bg-slate-950/60 border border-slate-800 focus:border-indigo-500 rounded-xl pl-10 pr-4 py-2.5 focus:outline-none placeholder-slate-600"
                   value={githubToken}
-                  onChange={(e) => {
-                    setGithubToken(e.target.value);
-                    localStorage.setItem('github_token', e.target.value);
-                  }}
+                  onChange={(e) => setGithubToken(e.target.value)}
                 />
               </div>
               {githubToken && (
                 <button
                   type="button"
-                  onClick={() => {
-                    setGithubToken('');
-                    localStorage.removeItem('github_token');
-                  }}
+                  onClick={() => setGithubToken('')}
                   className="w-full text-[10px] font-bold text-red-400 hover:text-red-300 bg-red-950/20 hover:bg-red-950/30 border border-red-900/35 hover:border-red-900/50 py-2 rounded-xl transition-all focus:outline-none cursor-pointer flex items-center justify-center gap-1 active:scale-98"
                 >
                   <Trash2 className="w-3.5 h-3.5" />

@@ -1,10 +1,10 @@
 <div align="center">
 
-# 🛡️ SecureFlow AI
+# 🛡️ Sphere
 
 ### Agentic AI-Powered DevSecOps Security Engineer
 
-SecureFlow AI is an intelligent DevSecOps platform that automatically audits GitHub repositories, detects security vulnerabilities, analyzes CI/CD workflows, generates secure GitHub Actions pipelines, and provides AI-powered remediation recommendations.
+Sphere is an intelligent DevSecOps platform that automatically audits GitHub repositories, detects security vulnerabilities, analyzes CI/CD workflows, generates secure GitHub Actions pipelines, and provides AI-powered remediation recommendations.
 
 ---
 
@@ -20,7 +20,7 @@ SecureFlow AI is an intelligent DevSecOps platform that automatically audits Git
 
 Modern software projects heavily rely on open-source libraries, Docker containers, and GitHub Actions workflows. While existing security tools can detect vulnerabilities, developers are often required to manually interpret reports, understand security risks, and implement fixes.
 
-**SecureFlow AI** simplifies this process by combining multiple open-source security scanners with a **LangGraph-based Multi-Agent AI System** that automatically:
+**Sphere** simplifies this process by combining multiple open-source security scanners with a **LangGraph-based Multi-Agent AI System** that automatically:
 
 - Detects vulnerabilities
 - Calculates repository health
@@ -123,7 +123,7 @@ flowchart TB
 # Multi-Agent Architecture
 
 
-SecureFlow AI uses a **LangGraph Multi-Agent Architecture** where every AI agent has a dedicated responsibility.
+Sphere uses a **LangGraph Multi-Agent Architecture** where every AI agent has a dedicated responsibility.
 
 | Agent | Responsibility |
 |---------|---------------|
@@ -298,7 +298,7 @@ secureflow-ai/
 
 # Security Analysis Pipeline
 
-SecureFlow AI performs a complete security audit using five specialized security scanners.
+Sphere performs a complete security audit using five specialized security scanners.
 
 ## 1️⃣ Gitleaks
 
@@ -519,7 +519,7 @@ src="https://github.com/user-attachments/assets/90b8c458-085b-418e-825c-042665d9
 Clone the repository
 
 ```bash
-git clone https://github.com/yourusername/secureflow-ai.git
+git clone https://github.com/shrinithisk/Sphere.git
 ```
 
 Backend
@@ -541,6 +541,23 @@ npm install
 
 npm run dev
 ```
+
+---
+
+## Deployment Architecture & Render Ephemeral Storage
+
+Sphere is deployed with a FastAPI backend (Dockerfile on Render) and a React frontend on Vercel:
+
+1. **Host Security (No In-Process Scanned Code Execution)**:
+   - To strictly protect backend server environment variables, Gemini API keys, and JWT credentials, Sphere **never executes scanned repositories' build, test, or install scripts on the server host**.
+   - Server-side verification is static only (`STATIC-VERIFIED (tests not run)`): full-repo rescan with all 5 scanner binaries, safe lockfile reconciliation via `npm --package-lock-only --ignore-scripts`, syntax/compile checks, and Actionlint/Hadolint.
+   - Dynamic build and test execution is delegated entirely to GitHub Actions CI via draft pull requests.
+
+2. **Render Ephemeral Storage & ZIP Retention**:
+   - Render web services run on ephemeral container filesystems. When a new deployment occurs or the service restarts, local disk contents are reset.
+   - Uploaded ZIP archives and persistent patch archives stored in `backend/temp_uploads` have a 24-hour automatic retention policy and a 5-ZIP per-user quota.
+   - **Production Persistent Storage Recommendation**: For persistent retention of uploaded ZIP repositories and patch archives across Render redeploys, mount a **Render Persistent Disk** at `/app/temp_uploads` (or configure S3-compatible object storage).
+   - On backend startup, Sphere automatically runs `cleanup_stale_running_jobs()` to ensure any jobs interrupted by a Render restart are safely marked as `FAILED (interrupted)` rather than orphaned in a `RUNNING` state.
 
 ---
 ## Author
